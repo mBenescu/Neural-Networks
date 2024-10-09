@@ -1,2 +1,5 @@
 # ignore the datasets
 /*.txt
+*.pyc
+.DS_Store
+ECGdata/

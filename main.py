@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Tuple
 
 import torch
 import torch.nn as nn
@@ -12,6 +12,7 @@ from sklearn.model_selection import KFold
 from torch.utils.data import TensorDataset, DataLoader
 
 from models.mlp import get_mlp
+from models.lstm import LSTMTrainer, ModelEvaluator
 
 RAND_SEED = 42
 torch.manual_seed(RAND_SEED)
@@ -122,6 +123,28 @@ def kfold_cv(k: int, X: np.ndarray, y: np.ndarray, num_neurons_options: List, nu
         models_performance[num_neurons] = np.mean(fold_losses)
 
 
+def create_sequences(data: np.ndarray, labels: np.ndarray,
+                     seq_length: int) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Splits time series data into sequences of a specified length along
+    with their corresponding labels. This creates sliding window sequences
+    of the input data and assings the corresponding label to each sequence.
+    :param data: the input time series data
+    :param labels: the target values of the data
+    :param seq_length: the length of each sequence
+    :return xs: an array of input sequences (seq_length, n_features)
+    :return ys: an array of labels
+    """
+    xs = []
+    ys = []
+    for i in range(len(data) - seq_length):
+        x = data[i:i+seq_length]
+        y = labels[i+seq_length]
+        xs.append(x)
+        ys.append(y)
+    return np.array(xs), np.array(ys)
+
+
 def main():
     abdomen1 = import_data_from_txt_to_np("./ECGdata/abdomen1.txt")[:2000]
 
@@ -183,6 +206,45 @@ def main():
     loss = nn.MSELoss()
 
     model = get_mlp(num_input_first_layer=X.shape[1], num_hidden_layers=num_hidden_layers, num_neurons=num_neurons)
+
+    # ------ LSTM model ------
+
+    seq_length = 50
+    X_train_seq, Y_train_seq = create_sequences(X_train.numpy(),
+                                                Y_train.numpy(), seq_length)
+    X_test_seq, Y_test_seq = create_sequences(X_test.numpy(),
+                                              Y_test.numpy(), seq_length)
+
+    X_train_tensor = torch.from_numpy(X_train_seq).float()
+    Y_train_tensor = torch.from_numpy(Y_train_seq).float()
+    X_test_tensor = torch.from_numpy(X_test_seq).float()
+    Y_test_tensor = torch.from_numpy(Y_test_seq).float()
+
+    train_data = TensorDataset(X_train_tensor, Y_train_tensor)
+    test_data = TensorDataset(X_test_tensor, Y_test_tensor)
+    train_loader = DataLoader(train_data, batch_size=32, shuffle=True)
+    test_loader = DataLoader(test_data, batch_size=32)
+
+    # initiliaze the LSTM model
+    input_size = X_train_tensor.shape[2]
+    hidden_size = 128
+    num_layers = 2
+    output_size = 1
+    droput_prob = 0.2
+
+    lstm_trainer = LSTMTrainer(input_size, hidden_size,
+                               num_layers, output_size,
+                               dropout_prob=droput_prob)
+    lstm_trainer.train(train_loader, test_loader, num_epochs=50, patience=5)
+
+    model_evaluator = ModelEvaluator(lstm_trainer.get_model(), test_loader)
+    model_evaluator.evaluate()
+    model_evaluator.calculate_metrics()
+    train_loss, val_loss = lstm_trainer.get_loss_history()
+
+    # plot the evaluation
+    model_evaluator.plot_predictions()
+    model_evaluator.plot_loss(train_loss, val_loss)
 
 
 if __name__ == "__main__":
