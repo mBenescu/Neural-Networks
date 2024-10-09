@@ -2,7 +2,7 @@ from typing import List, Tuple
 
 import torch
 import torch.nn as nn
-import torch.optim as optim
+
 
 import numpy as np
 from scipy.signal import butter, filtfilt
@@ -70,65 +70,13 @@ def butter_low_high_pass_filter(data, cutoff, fs, order, high_low="low"):
     return y
 
 
-def kfold_cv(k: int, X: np.ndarray, y: np.ndarray, num_neurons_options: List, num_epochs: int):
-    kf = KFold(k, shuffle=True, random_state=RAND_SEED)
-
-    batch_size = 32
-
-    models_performance = {}
-
-    for num_neurons in num_neurons_options:
-        model = get_mlp(2, 1, num_neurons)
-        model.train()
-        mse = nn.MSELoss()
-        optimizer = optim.SGD(model.parameters())
-
-        fold_losses = []
-
-        for fold, (train_idx, val_idx) in enumerate(kf.split(X)):
-            X_train, X_val = X[train_idx], X[val_idx]
-            y_train, y_val = y[train_idx], y[val_idx]
-
-            X_train_tensor = torch.from_numpy(X_train)
-            y_train_tensor = torch.from_numpy(y_train)
-            X_val_tensor = torch.from_numpy(X_val)
-            y_val_tensor = torch.from_numpy(y_val)
-
-            train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-            val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
-            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-            val_loader = DataLoader(val_dataset, batch_size=batch_size)
-
-            for epoch in range(num_epochs):
-                epoch_loss = 0.0
-                for batch_X, batch_y in train_loader:
-                    optimizer.zero_grad()
-                    outputs = model(batch_X)
-                    loss = mse(outputs, batch_y)
-                    mse.backward()
-                    optimizer.step()
-                    epoch_loss += loss.item()
-
-            model.eval()
-            val_loss = 0.0
-            with torch.no_grad():
-                for batch_X, batch_y in val_loader:
-                    outputs = model(batch_X)
-                    loss = mse(outputs, batch_y)
-                    val_loss += loss.item()
-            average_val_loss = val_loss / len(val_loader)
-            fold_losses.append(average_val_loss)
-            print(f'Validation Loss: {average_val_loss:.4f}')
-
-        models_performance[num_neurons] = np.mean(fold_losses)
-
 
 def create_sequences(data: np.ndarray, labels: np.ndarray,
                      seq_length: int) -> Tuple[np.ndarray, np.ndarray]:
     """
     Splits time series data into sequences of a specified length along
     with their corresponding labels. This creates sliding window sequences
-    of the input data and assings the corresponding label to each sequence.
+    of the input data and assigns the corresponding label to each sequence.
     :param data: the input time series data
     :param labels: the target values of the data
     :param seq_length: the length of each sequence
@@ -138,8 +86,8 @@ def create_sequences(data: np.ndarray, labels: np.ndarray,
     xs = []
     ys = []
     for i in range(len(data) - seq_length):
-        x = data[i:i+seq_length]
-        y = labels[i+seq_length]
+        x = data[i:i + seq_length]
+        y = labels[i + seq_length]
         xs.append(x)
         ys.append(y)
     return np.array(xs), np.array(ys)
