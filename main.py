@@ -1,20 +1,39 @@
-from typing import List, Tuple
-
-import torch
-import torch.nn as nn
-
-
 import numpy as np
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, freqz
 import matplotlib.pyplot as plt
 
 from sklearn.linear_model import LinearRegression
 
 from models.mlp import *
-from models.lstm import LSTMTrainer, ModelEvaluator
+from models.filters import FIR_filter
 
 RAND_SEED = 42
 torch.manual_seed(RAND_SEED)
+
+
+def plot_fft(signal: np.ndarray, fs: int, title: str = "the given signal") -> None:
+    """
+    Plots the FFT of a given signal.
+    :param signal: Input signal to be analyzed in the frequency domain.
+    :param fs: Sampling frequency (in Hz).
+    :param title: Title for the plot.
+    """
+    # Compute the FFT
+    fft_result = np.fft.fft(signal)
+    # Compute the corresponding frequencies
+    freqs = np.fft.fftfreq(len(signal), d=1 / fs)
+    # Only take the positive part of the spectrum
+    positive_freqs = freqs[:len(freqs) // 2]
+    magnitude = np.abs(fft_result)[:len(freqs) // 2]
+
+    # Plot the magnitude spectrum
+    plt.figure(figsize=(10, 6))
+    plt.plot(positive_freqs, magnitude)
+    plt.xlabel('Frequency (Hz)')
+    plt.ylabel('Magnitude')
+    plt.title(f'Frequency Spectrum of {title}')
+    plt.grid(True)
+    plt.show()
 
 
 def import_data_from_txt_to_np(path: str) -> np.ndarray:
@@ -27,14 +46,16 @@ def import_data_from_txt_to_np(path: str) -> np.ndarray:
     return data_array
 
 
-def normalize(dataset: np.ndarray) -> np.ndarray:
+def normalize(dataset: np.ndarray, mean: np.float64, std: np.float64) -> np.ndarray:
     """
     Normalize the data to 0 mean and unit variance
+    :param std: standard deviation to divide the dataset
+    :param mean: mean to subtract
     :param dataset: the dataset to be normalized
     :return: the normalized dataset
     """
 
-    dataset_norm = (dataset - dataset.mean()) / dataset.std()
+    dataset_norm = (dataset - mean) / std
     return dataset_norm
 
 
@@ -69,35 +90,11 @@ def butter_low_high_pass_filter(data, cutoff, fs, order, high_low="low"):
     return y
 
 
-
-def create_sequences(data: np.ndarray, labels: np.ndarray,
-                     seq_length: int) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Splits time series data into sequences of a specified length along
-    with their corresponding labels. This creates sliding window sequences
-    of the input data and assigns the corresponding label to each sequence.
-    :param data: the input time series data
-    :param labels: the target values of the data
-    :param seq_length: the length of each sequence
-    :return xs: an array of input sequences (seq_length, n_features)
-    :return ys: an array of labels
-    """
-    xs = []
-    ys = []
-    for i in range(len(data) - seq_length):
-        x = data[i:i + seq_length]
-        y = labels[i + seq_length]
-        xs.append(x)
-        ys.append(y)
-    return np.array(xs), np.array(ys)
-
-
 def main():
     offset = 12
 
     abs_start_index, abs_end_index = 400, 2400
-    thorax_start_index, thorax_end_index = abs_start_index - offset, abs_end_index - offset
-
+    thorax_start_index, thorax_end_index = abs_start_index , abs_end_index #- offset
 
     abdomen1 = import_data_from_txt_to_np("./ECGdata/abdomen1.txt")[abs_start_index:abs_end_index]
 
@@ -107,44 +104,93 @@ def main():
     thorax1 = import_data_from_txt_to_np("./ECGdata/thorax1.txt")[thorax_start_index:thorax_end_index]
     thorax2 = import_data_from_txt_to_np("./ECGdata/thorax2.txt")[thorax_start_index:thorax_end_index]
 
-
     datasets = [abdomen1, abdomen2, abdomen3, thorax1, thorax2]
 
     # 1000 Hz taken from the assignment
     fs = 1000
     # The typical heart rate = around 60 to 100 bpm =~ 1 to 1.7 Hz. Anything below is noise.
-    cutoff = 0.5
+    cutoff = .5
 
     # High-pass the data
     high_passed = [butter_low_high_pass_filter(data=dataset, cutoff=cutoff, fs=fs, order=2, high_low="high")
                    for dataset in datasets]
 
-    # Normalize the data
-    norm_datasets = [normalize(dataset) for dataset in high_passed]
+    # Plot the frequency domain of the signals
+    # plot_fft(abdomen3, 1000, "Abs3 raw")
+    # plot_fft(high_passed[2], 1000, "Abs3 high-passed")
+    # plot_fft(thorax2, 1000, "Thorax2 raw")
+    # plot_fft(high_passed[-1], 1000, "Thorax2 high-passed")
 
-    # # Plot the data
+    # Normalize the data
+
+    # Subtract mean to remove DC offset
+    datasets_zero_mean = [dataset - np.mean(dataset) for dataset in high_passed]
+
+    # Scale signals uniformly
+    max_abs_value = max([np.max(np.abs(dataset)) for dataset in datasets_zero_mean])
+    datasets_scaled = [dataset / max_abs_value for dataset in datasets_zero_mean]
+
+    # Prepare signals for filtering
+    abs3 = datasets_scaled[2]
+    thorax2 = datasets_scaled[4]
+
+    # abs3_norm = normalize(high_passed[2], mean=mean, std=std).reshape(-1, 1)
+    # thorax2_norm = normalize(high_passed[-1], mean=mean, std=std).reshape(-1, 1)
+    thorax2_high_passed = high_passed[-1].reshape(-1, 1)
+    abs3_high_passed = high_passed[2].reshape(-1, 1)
+
+    # norm_datasets = [abs3_norm, thorax2_norm]
+
+    # # # Plot the data
     plot_data(datasets)
     plot_data(high_passed)
-    plot_data(norm_datasets)
+    # plot_data(norm_datasets)
 
-    abs3_norm = norm_datasets[2].reshape(-1, 1)
-    thorax2_norm = norm_datasets[4].reshape(-1, 1)
 
-    print(np.argmax(abs3_norm), np.argmax(thorax2_norm))
+    # print(np.argmax(abs3_norm), np.argmax(thorax2_norm))
 
     linear_regression = LinearRegression()
 
-    linear_regression.fit(thorax2_norm, abs3_norm)
+    # linear_regression.fit(thorax2_norm, abs3_norm)
+    linear_regression.fit(thorax2_high_passed, abs3_high_passed)
 
-    filtered_output = abs3_norm - linear_regression.predict(thorax2_norm).reshape(abs3_norm.shape)
+    # filtered_output_regression = abs3_norm - linear_regression.predict(thorax2_norm).reshape(abs3_norm.shape)
+    filtered_output_regression = abs3_high_passed - linear_regression.predict(thorax2_high_passed).\
+        reshape(abs3_high_passed.shape)
 
-    plot_data([filtered_output, abs3_norm - thorax2_norm])
+    filter_length = 50
+    learning_rate = 0.001
 
+    initial_weights = np.zeros(filter_length)
+    fir = FIR_filter(initial_weights)
+    # y = np.zeros(len(abs3_norm), dtype=np.float64)
+    # y = np.zeros(len(abs3_high_passed), dtype=np.float64)
+    y = np.zeros(len(abs3), dtype=np.float64)
 
+    # abs3_norm = abs3_norm.flatten()
+    # abs3_high_passed = abs3_high_passed.flatten()
+    abs3 = abs3.flatten()
+    # thorax2_norm = thorax2_norm.flatten()
+    # thorax2_high_passed = thorax2_high_passed.flatten()
+    thorax2 = thorax2.flatten()
 
+    # for i in range(len(abs3_norm)):
+    # for i in range(len(abs3_high_passed)):
+    for i in range(len(abs3)):
+        # canceller = fir.filter(thorax2_norm[i])
+        # canceller = fir.filter(thorax2_high_passed[i])
+        canceller = fir.filter(thorax2[i])
+        # output_signal = abs3_norm[i] - canceller
+        # output_signal = abs3_high_passed[i] - canceller
+        output_signal = abs3[i] - canceller
+        if i % 100 == 0:
+            # print(f"Output Signal: {output_signal}, Canceller: {canceller}, Input: {thorax2_norm[i]}")
+            # print(f"Output Signal: {output_signal}, Canceller: {canceller}, Input: {thorax2_high_passed[i]}")
+            print(f"Output Signal: {output_signal}, Canceller: {canceller}, Input: {thorax2[i]}")
+        fir.lms(output_signal, learning_rate)
+        y[i] = output_signal
 
-
-
+    plot_data([filtered_output_regression, y])
 
 
 if __name__ == "__main__":
