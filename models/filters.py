@@ -15,6 +15,6 @@ class FIR_filter:
 
     def lms(self, error, mu=0.01):
         for j in range(self.filter_length):
-            self.coefficients[j] = self.coefficients[j] + error * mu * self.buffer[j]
+            self.coefficients[j] += error * mu * self.buffer[j]
 
 

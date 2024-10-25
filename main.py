@@ -59,14 +59,25 @@ def normalize(dataset: np.ndarray, mean: np.float64, std: np.float64) -> np.ndar
     return dataset_norm
 
 
-def plot_data(datasets: List[np.ndarray]) -> None:
+def plot_data(datasets: List[np.ndarray], titles: List[str], general_title: str) -> None:
     """
     Plots the datasets stacked vertically, sharing the x axis
-    :param datasets:  the datasets to plot
+    :param datasets: the datasets to plot
+    :param titles: the titles of each subplot
+    :param general_title: the general title for the entire figure
+    Plots the datasets stacked vertically, sharing the x axis
+    :param datasets: the datasets to plot
     """
-    fix, axs = plt.subplots(len(datasets), sharex=True)
-    for i, dataset in enumerate(datasets):
+    fig, axs = plt.subplots(len(datasets), sharex=True, figsize=(10, 6))
+    fig.suptitle(general_title, fontsize=16)
+
+    for i, (dataset, title) in enumerate(zip(datasets, titles)):
         axs[i].plot(dataset)
+        axs[i].text(1.05, 0.5, title, va='center', ha='left', rotation='horizontal',
+                    transform=axs[i].transAxes, fontsize=10)
+        axs[i].grid(True)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.show()
 
 
@@ -93,8 +104,8 @@ def butter_low_high_pass_filter(data, cutoff, fs, order, high_low="low"):
 def main():
     offset = 12
 
-    abs_start_index, abs_end_index = 400, 2400
-    thorax_start_index, thorax_end_index = abs_start_index , abs_end_index #- offset
+    abs_start_index, abs_end_index = 0, 10000
+    thorax_start_index, thorax_end_index = abs_start_index, abs_end_index #- offset
 
     abdomen1 = import_data_from_txt_to_np("./ECGdata/abdomen1.txt")[abs_start_index:abs_end_index]
 
@@ -109,88 +120,80 @@ def main():
     # 1000 Hz taken from the assignment
     fs = 1000
     # The typical heart rate = around 60 to 100 bpm =~ 1 to 1.7 Hz. Anything below is noise.
-    cutoff = .5
+    high_cutoff = 0.5
+
+    low_cutoff = 40
 
     # High-pass the data
-    high_passed = [butter_low_high_pass_filter(data=dataset, cutoff=cutoff, fs=fs, order=2, high_low="high")
+    high_passed = [butter_low_high_pass_filter(data=dataset, cutoff=high_cutoff, fs=fs, order=2, high_low="high")
                    for dataset in datasets]
+
+    # Low-pass the data
+    low_passed = [butter_low_high_pass_filter(data=dataset, cutoff=low_cutoff, fs=fs, order=2, high_low="low")
+                  for dataset in high_passed]
 
     # Plot the frequency domain of the signals
     # plot_fft(abdomen3, 1000, "Abs3 raw")
     # plot_fft(high_passed[2], 1000, "Abs3 high-passed")
+    # plot_fft(low_passed[2], 1000, "Abs3 low-passed")
     # plot_fft(thorax2, 1000, "Thorax2 raw")
     # plot_fft(high_passed[-1], 1000, "Thorax2 high-passed")
+    # plot_fft(low_passed[-1], 1000, "Thorax2 low-passed")
 
     # Normalize the data
 
-    # Subtract mean to remove DC offset
-    datasets_zero_mean = [dataset - np.mean(dataset) for dataset in high_passed]
+    all_data = np.array(datasets).flatten()
+    global_mean = all_data.mean()
+    global_std = all_data.std()
 
-    # Scale signals uniformly
-    max_abs_value = max([np.max(np.abs(dataset)) for dataset in datasets_zero_mean])
-    datasets_scaled = [dataset / max_abs_value for dataset in datasets_zero_mean]
+    norm_datasets = [normalize(dataset, dataset.mean(), dataset.std()) for dataset in low_passed]
+
 
     # Prepare signals for filtering
-    abs3 = datasets_scaled[2]
-    thorax2 = datasets_scaled[4]
+    abs3 = norm_datasets[2].reshape(-1, 1)
+    thorax2 = norm_datasets[4].reshape(-1, 1)
 
-    # abs3_norm = normalize(high_passed[2], mean=mean, std=std).reshape(-1, 1)
-    # thorax2_norm = normalize(high_passed[-1], mean=mean, std=std).reshape(-1, 1)
-    thorax2_high_passed = high_passed[-1].reshape(-1, 1)
-    abs3_high_passed = high_passed[2].reshape(-1, 1)
-
-    # norm_datasets = [abs3_norm, thorax2_norm]
 
     # # # Plot the data
-    plot_data(datasets)
-    plot_data(high_passed)
-    # plot_data(norm_datasets)
-
-
+    titles = ["abdomen1", "abdomen2", "abdomen3", "thorax1", "thorax2"]
+    plot_data(datasets, titles, "Raw Data")
+    plot_data(high_passed, titles, "High-passed with a cutoff frequency of " + str(high_cutoff) + " Hz")
+    plot_data(low_passed, titles, "Low-passed with a cutoff frequency of " + str(low_cutoff) + " Hz")
+    plot_data(norm_datasets, titles, "Individually normalized dataset")
     # print(np.argmax(abs3_norm), np.argmax(thorax2_norm))
 
     linear_regression = LinearRegression()
 
-    # linear_regression.fit(thorax2_norm, abs3_norm)
-    linear_regression.fit(thorax2_high_passed, abs3_high_passed)
+    linear_regression.fit(abs3, thorax2)
 
-    # filtered_output_regression = abs3_norm - linear_regression.predict(thorax2_norm).reshape(abs3_norm.shape)
-    filtered_output_regression = abs3_high_passed - linear_regression.predict(thorax2_high_passed).\
-        reshape(abs3_high_passed.shape)
+    prediction = linear_regression.predict(abs3)
 
-    filter_length = 50
+    filtered_output_regression = abs3 - prediction.\
+        reshape(abs3.shape)
+
+    filter_length = 100
+
     learning_rate = 0.001
 
     initial_weights = np.zeros(filter_length)
     fir = FIR_filter(initial_weights)
-    # y = np.zeros(len(abs3_norm), dtype=np.float64)
-    # y = np.zeros(len(abs3_high_passed), dtype=np.float64)
+
     y = np.zeros(len(abs3), dtype=np.float64)
 
-    # abs3_norm = abs3_norm.flatten()
-    # abs3_high_passed = abs3_high_passed.flatten()
     abs3 = abs3.flatten()
-    # thorax2_norm = thorax2_norm.flatten()
-    # thorax2_high_passed = thorax2_high_passed.flatten()
     thorax2 = thorax2.flatten()
 
-    # for i in range(len(abs3_norm)):
-    # for i in range(len(abs3_high_passed)):
     for i in range(len(abs3)):
-        # canceller = fir.filter(thorax2_norm[i])
-        # canceller = fir.filter(thorax2_high_passed[i])
         canceller = fir.filter(thorax2[i])
-        # output_signal = abs3_norm[i] - canceller
-        # output_signal = abs3_high_passed[i] - canceller
         output_signal = abs3[i] - canceller
         if i % 100 == 0:
-            # print(f"Output Signal: {output_signal}, Canceller: {canceller}, Input: {thorax2_norm[i]}")
-            # print(f"Output Signal: {output_signal}, Canceller: {canceller}, Input: {thorax2_high_passed[i]}")
             print(f"Output Signal: {output_signal}, Canceller: {canceller}, Input: {thorax2[i]}")
         fir.lms(output_signal, learning_rate)
         y[i] = output_signal
 
-    plot_data([filtered_output_regression, y])
+    titles = ["abs3- LR prediction", "LR prediction", "norm thorax2", "norm abs3", "FIR length=" +
+              str(filter_length) + " lr=" + str(learning_rate)]
+    plot_data([filtered_output_regression, prediction, thorax2, abs3, y], titles, "Final results")
 
 
 if __name__ == "__main__":
