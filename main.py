@@ -1,14 +1,41 @@
+from typing import Tuple
+
 import numpy as np
 from scipy.signal import butter, filtfilt, freqz
 import matplotlib.pyplot as plt
 
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import Ridge
 
 from models.mlp import *
 from models.filters import FIR_filter
 
 RAND_SEED = 42
 torch.manual_seed(RAND_SEED)
+
+
+def create_lagged_matrix(signal, lag):
+    """
+    Create a lagged matrix from the signal.
+    Each column contains [signal[t], signal[t-1], ..., signal[t - lag + 1]]
+    """
+    N = len(signal)
+    flattened_signal = signal.flatten()
+    if lag > N:
+        raise ValueError("Lag is larger than the signal length")
+    X = np.zeros((N - lag + 1, lag))
+    for i in range(lag):
+        X[:, i] = flattened_signal[lag - i - 1:N - i]
+    return X
+
+
+def create_X_Y(abs_data: np.ndarray, thorax_data: np.ndarray, filter_window: int) -> Tuple[np.ndarray, np.ndarray]:
+    index = filter_window // 2
+    X = np.ones((len(abs_data) - filter_window, filter_window + 1))
+    Y = abs_data[index: -index]
+    print(f"{index=}, {X.shape=}, {Y.shape=}")
+    for i in range(len(Y)):
+        X[i, : -1] = thorax_data[i: filter_window + i].flatten()
+    return X, Y
 
 
 def plot_fft(signal: np.ndarray, fs: int, title: str = "the given signal") -> None:
@@ -102,18 +129,14 @@ def butter_low_high_pass_filter(data, cutoff, fs, order, high_low="low"):
 
 
 def main():
-    offset = 12
 
-    abs_start_index, abs_end_index = 0, 10000
-    thorax_start_index, thorax_end_index = abs_start_index, abs_end_index #- offset
+    abdomen1 = import_data_from_txt_to_np("./ECGdata/abdomen1.txt")
 
-    abdomen1 = import_data_from_txt_to_np("./ECGdata/abdomen1.txt")[abs_start_index:abs_end_index]
+    abdomen2 = import_data_from_txt_to_np("./ECGdata/abdomen2.txt")
+    abdomen3 = import_data_from_txt_to_np("./ECGdata/abdomen3.txt")
 
-    abdomen2 = import_data_from_txt_to_np("./ECGdata/abdomen2.txt")[abs_start_index:abs_end_index]
-    abdomen3 = import_data_from_txt_to_np("./ECGdata/abdomen3.txt")[abs_start_index:abs_end_index]
-
-    thorax1 = import_data_from_txt_to_np("./ECGdata/thorax1.txt")[thorax_start_index:thorax_end_index]
-    thorax2 = import_data_from_txt_to_np("./ECGdata/thorax2.txt")[thorax_start_index:thorax_end_index]
+    thorax1 = import_data_from_txt_to_np("./ECGdata/thorax1.txt")
+    thorax2 = import_data_from_txt_to_np("./ECGdata/thorax2.txt")
 
     datasets = [abdomen1, abdomen2, abdomen3, thorax1, thorax2]
 
@@ -122,15 +145,11 @@ def main():
     # The typical heart rate = around 60 to 100 bpm =~ 1 to 1.7 Hz. Anything below is noise.
     high_cutoff = 0.5
 
-    low_cutoff = 40
+    low_cutoff = 3
 
     # High-pass the data
     high_passed = [butter_low_high_pass_filter(data=dataset, cutoff=high_cutoff, fs=fs, order=2, high_low="high")
                    for dataset in datasets]
-
-    # Low-pass the data
-    low_passed = [butter_low_high_pass_filter(data=dataset, cutoff=low_cutoff, fs=fs, order=2, high_low="low")
-                  for dataset in high_passed]
 
     # Plot the frequency domain of the signals
     # plot_fft(abdomen3, 1000, "Abs3 raw")
@@ -140,60 +159,42 @@ def main():
     # plot_fft(high_passed[-1], 1000, "Thorax2 high-passed")
     # plot_fft(low_passed[-1], 1000, "Thorax2 low-passed")
 
-    # Normalize the data
-
-    all_data = np.array(datasets).flatten()
-    global_mean = all_data.mean()
-    global_std = all_data.std()
-
-    norm_datasets = [normalize(dataset, dataset.mean(), dataset.std()) for dataset in low_passed]
-
-
     # Prepare signals for filtering
-    abs3 = norm_datasets[2].reshape(-1, 1)
-    thorax2 = norm_datasets[4].reshape(-1, 1)
+    abs3 = high_passed[2].reshape(-1, 1)
+    thorax2 = high_passed[4].reshape(-1, 1)
 
+    # abs3 = high_passed[2].reshape(-1, 1)
+    # thorax2 = high_passed[4].reshape(-1, 1)
 
     # # # Plot the data
     titles = ["abdomen1", "abdomen2", "abdomen3", "thorax1", "thorax2"]
-    plot_data(datasets, titles, "Raw Data")
-    plot_data(high_passed, titles, "High-passed with a cutoff frequency of " + str(high_cutoff) + " Hz")
-    plot_data(low_passed, titles, "Low-passed with a cutoff frequency of " + str(low_cutoff) + " Hz")
-    plot_data(norm_datasets, titles, "Individually normalized dataset")
+    # plot_data(datasets, titles, "Raw Data")
+    # plot_data(high_passed, titles, "High-passed with a cutoff frequency of " + str(high_cutoff) + " Hz")
+    # plot_data(low_passed, titles, "Low-passed with a cutoff frequency of " + str(low_cutoff) + " Hz")
+    # plot_data(norm_datasets, titles, "Individually normalized dataset")
     # print(np.argmax(abs3_norm), np.argmax(thorax2_norm))
 
-    linear_regression = LinearRegression()
+    filter_length = 250
 
-    linear_regression.fit(abs3, thorax2)
+    X, y = create_X_Y(abs3, thorax2, filter_length)
 
-    prediction = linear_regression.predict(abs3)
+    print(X.shape, y.shape)
 
-    filtered_output_regression = abs3 - prediction.\
-        reshape(abs3.shape)
+    linear_regression = Ridge(alpha=1.0)
+    linear_regression.fit(X, y)
 
-    filter_length = 100
+    prediction = linear_regression.predict(X)
+    filtered_output_regression = y - prediction
 
-    learning_rate = 0.001
+    squared_prediction = filtered_output_regression ** 2
 
-    initial_weights = np.zeros(filter_length)
-    fir = FIR_filter(initial_weights)
+    smoothed_squared_prediction = butter_low_high_pass_filter(squared_prediction.flatten(), cutoff=low_cutoff, fs=fs,
+                                                              order=2, high_low="low")
 
-    y = np.zeros(len(abs3), dtype=np.float64)
-
-    abs3 = abs3.flatten()
-    thorax2 = thorax2.flatten()
-
-    for i in range(len(abs3)):
-        canceller = fir.filter(thorax2[i])
-        output_signal = abs3[i] - canceller
-        if i % 100 == 0:
-            print(f"Output Signal: {output_signal}, Canceller: {canceller}, Input: {thorax2[i]}")
-        fir.lms(output_signal, learning_rate)
-        y[i] = output_signal
-
-    titles = ["abs3- LR prediction", "LR prediction", "norm thorax2", "norm abs3", "FIR length=" +
-              str(filter_length) + " lr=" + str(learning_rate)]
-    plot_data([filtered_output_regression, prediction, thorax2, abs3, y], titles, "Final results")
+    titles = ["abs3- LR prediction", "Squared prediction", "smoothed_squared_prediction", "LR prediction",
+              "norm thorax2", "norm abs3"]
+    plot_data([filtered_output_regression, squared_prediction, smoothed_squared_prediction, prediction, thorax2, abs3],
+              titles, "Final results")
 
 
 if __name__ == "__main__":
