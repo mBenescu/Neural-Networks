@@ -1,38 +1,25 @@
-from typing import Tuple
+from numbers import Number
+from typing import Tuple, Any, Dict
 
 import numpy as np
 from scipy.signal import butter, filtfilt, freqz
 import matplotlib.pyplot as plt
 
 from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error
+import seaborn as sns
 
 from models.mlp import *
 from models.filters import FIR_filter
 
 RAND_SEED = 42
-torch.manual_seed(RAND_SEED)
-
-
-def create_lagged_matrix(signal, lag):
-    """
-    Create a lagged matrix from the signal.
-    Each column contains [signal[t], signal[t-1], ..., signal[t - lag + 1]]
-    """
-    N = len(signal)
-    flattened_signal = signal.flatten()
-    if lag > N:
-        raise ValueError("Lag is larger than the signal length")
-    X = np.zeros((N - lag + 1, lag))
-    for i in range(lag):
-        X[:, i] = flattened_signal[lag - i - 1:N - i]
-    return X
 
 
 def create_X_Y(abs_data: np.ndarray, thorax_data: np.ndarray, filter_window: int) -> Tuple[np.ndarray, np.ndarray]:
+    print(f"{filter_window=}")
     index = filter_window // 2
     X = np.ones((len(abs_data) - filter_window, filter_window + 1))
     Y = abs_data[index: -index]
-    print(f"{index=}, {X.shape=}, {Y.shape=}")
     for i in range(len(Y)):
         X[i, : -1] = thorax_data[i: filter_window + i].flatten()
     return X, Y
@@ -86,9 +73,11 @@ def normalize(dataset: np.ndarray, mean: np.float64, std: np.float64) -> np.ndar
     return dataset_norm
 
 
-def plot_data(datasets: List[np.ndarray], titles: List[str], general_title: str) -> None:
+def plot_data(datasets: List[np.ndarray | List[Number]], titles: List[str], general_title: str,
+              x_axis: List[Any] = None) -> None:
     """
     Plots the datasets stacked vertically, sharing the x axis
+    :param x_axis: The x axis of the plot
     :param datasets: the datasets to plot
     :param titles: the titles of each subplot
     :param general_title: the general title for the entire figure
@@ -99,12 +88,37 @@ def plot_data(datasets: List[np.ndarray], titles: List[str], general_title: str)
     fig.suptitle(general_title, fontsize=16)
 
     for i, (dataset, title) in enumerate(zip(datasets, titles)):
-        axs[i].plot(dataset)
+        axs[i].plot(x_axis, dataset) if x_axis is not None else axs[i].plot(dataset)
         axs[i].text(1.05, 0.5, title, va='center', ha='left', rotation='horizontal',
                     transform=axs[i].transAxes, fontsize=10)
         axs[i].grid(True)
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.show()
+
+
+def plot_final_ecg(normalized_y_test: np.ndarray, normalized_baby_ecg: np.ndarray, title: str) -> None:
+    """
+    Plots the normalized abs3 channel and normalized baby ECG on the same plot.
+
+    :param normalized_y_test: Normalized abs3 channel data (numpy array).
+    :param normalized_baby_ecg: Normalized baby ECG data (numpy array).
+    :param title: Title of the plot.
+    """
+    plt.figure(figsize=(15, 6))
+
+    # Plot normalized abs3 channel in red
+    plt.plot(normalized_y_test, color='red', label='Normalized Abdomen channel (Maternal + Fetal ECG)', alpha=0.7)
+
+    # Plot normalized baby ECG in black
+    plt.plot(normalized_baby_ecg, color='black', label='Normalized Smoothed Residuals (Fetal ECG)', alpha=0.7)
+
+    plt.xlabel('Sample Index')
+    plt.ylabel('Normalized Amplitude')
+    plt.title(title)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
     plt.show()
 
 
@@ -128,8 +142,67 @@ def butter_low_high_pass_filter(data, cutoff, fs, order, high_low="low"):
     return y
 
 
-def main():
+def get_heatmap_matrix(results_by_filter_length: Dict, key: str):
+    # Prepare data for heatmap
+    alphas = sorted(set(alpha for data in results_by_filter_length.values() for alpha in data['alphas']))
+    filter_lengths = sorted(results_by_filter_length.keys())
+    heatmap_matrix = np.zeros((len(filter_lengths), len(alphas)))
 
+    for i, filter_length in enumerate(filter_lengths):
+        data = results_by_filter_length[filter_length]
+        info_to_plot = data[key]
+        alpha_indices = [alphas.index(alpha) for alpha in data['alphas']]
+        heatmap_matrix[i, alpha_indices] = info_to_plot
+
+    return heatmap_matrix
+
+
+def plot_heatmap(results_by_filter_length: Dict, key: str, title: str) -> None:
+    matrix_to_plot = get_heatmap_matrix(results_by_filter_length, key)
+    alphas = sorted(set(alpha for data in results_by_filter_length.values() for alpha in data['alphas']))
+    filter_lengths = sorted(results_by_filter_length.keys())
+    plt.figure(figsize=(12, 8))
+    sns.heatmap(matrix_to_plot, annot=True, fmt=".4f",
+                xticklabels=alphas, yticklabels=filter_lengths, cmap="viridis")
+    plt.xlabel("Alpha")
+    plt.ylabel("Filter Length")
+    plt.title(title)
+    plt.show()
+
+
+def plot_mse_heatmaps(results_by_filter_length: Dict, keys: Tuple[str, str], titles: Tuple[str, str]) -> None:
+    alphas = sorted(set(alpha for data in results_by_filter_length.values() for alpha in data['alphas']))
+    filter_lengths = sorted(results_by_filter_length.keys())
+
+    metric_train, metric_test = keys
+    title_train, title_test = titles
+
+    # Get the matrices for training and test MSE
+    mse_train_matrix = get_heatmap_matrix(results_by_filter_length, metric_train)
+    mse_test_matrix = get_heatmap_matrix(results_by_filter_length, metric_test)
+
+    # Create a figure with two subplots
+    fig, axes = plt.subplots(1, 2, figsize=(20, 8))
+
+    # Plot Training MSE Heatmap
+    sns.heatmap(mse_train_matrix, annot=True, fmt=".4f", ax=axes[0],
+                xticklabels=alphas, yticklabels=filter_lengths, cmap="viridis")
+    axes[0].set_xlabel("Alpha")
+    axes[0].set_ylabel("Filter Length")
+    axes[0].set_title(title_train)
+
+    # Plot Test MSE Heatmap
+    sns.heatmap(mse_test_matrix, annot=True, fmt=".4f", ax=axes[1],
+                xticklabels=alphas, yticklabels=filter_lengths, cmap="viridis")
+    axes[1].set_xlabel("Alpha")
+    # axes[1].set_ylabel("Filter Length")
+    axes[1].set_title(title_test)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def main():
     abdomen1 = import_data_from_txt_to_np("./ECGdata/abdomen1.txt")
 
     abdomen2 = import_data_from_txt_to_np("./ECGdata/abdomen2.txt")
@@ -144,8 +217,6 @@ def main():
     fs = 1000
     # The typical heart rate = around 60 to 100 bpm =~ 1 to 1.7 Hz. Anything below is noise.
     high_cutoff = 0.5
-
-    low_cutoff = 3
 
     # High-pass the data
     high_passed = [butter_low_high_pass_filter(data=dataset, cutoff=high_cutoff, fs=fs, order=2, high_low="high")
@@ -163,9 +234,6 @@ def main():
     abs3 = high_passed[2].reshape(-1, 1)
     thorax2 = high_passed[4].reshape(-1, 1)
 
-    # abs3 = high_passed[2].reshape(-1, 1)
-    # thorax2 = high_passed[4].reshape(-1, 1)
-
     # # # Plot the data
     titles = ["abdomen1", "abdomen2", "abdomen3", "thorax1", "thorax2"]
     # plot_data(datasets, titles, "Raw Data")
@@ -174,27 +242,100 @@ def main():
     # plot_data(norm_datasets, titles, "Individually normalized dataset")
     # print(np.argmax(abs3_norm), np.argmax(thorax2_norm))
 
-    filter_length = 250
+    # alphas = [0, 0.01, 0.1, 1, 10, 100]
+    # # filter_lengths = [10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000]
+    #
+    # filter_lengths = [i for i in range(430, 461, 2)]
+    #
+    # # Initialize storage for plotting results
+    # results_by_filter_length = {length: {'alphas': [], 'mse_train': [], 'mse_test': [], 'r2_score_train': [],
+    #                                      'r2_score_test': []} for length in filter_lengths}
+    # best_alpha, best_filter_length, lowest_mse = None, None, float('inf')
+    #
+    # for filter_length in filter_lengths:
+    #     total_X, total_y = create_X_Y(abs3, thorax2, filter_length)
+    #     split_index = int(len(total_X) * 0.9)
+    #
+    #     # Split the data
+    #     X_train, y_train = total_X[: split_index], total_y[:split_index]
+    #     X_test, y_test = total_X[split_index:], total_y[split_index:]
+    #
+    #     for alpha in alphas:
+    #         print(f"{alpha =}")
+    #         # Train Ridge Regression
+    #         model = Ridge(alpha=alpha)
+    #         model.fit(X_train, y_train)
+    #
+    #         # Predictions and evaluation
+    #         prediction_train = model.predict(X_train)
+    #         prediction_test = model.predict(X_test)
+    #         mse_train = mean_squared_error(y_train, prediction_train)
+    #         mse_test = mean_squared_error(y_test, prediction_test)
+    #         r2_score_train = model.score(X_train, y_train)
+    #         r2_score_test = model.score(X_test, y_test)
+    #
+    #         # Track the best parameters based on MSE on the test set
+    #         if mse_test < lowest_mse:
+    #             best_alpha, best_filter_length, lowest_mse = alpha, filter_length, mse_test
+    #
+    #         # Store results for this filter length
+    #         results_by_filter_length[filter_length]['alphas'].append(alpha)
+    #         results_by_filter_length[filter_length]['mse_train'].append(mse_train)
+    #         results_by_filter_length[filter_length]['mse_test'].append(mse_test)
+    #         results_by_filter_length[filter_length]['r2_score_train'].append(r2_score_train)
+    #         results_by_filter_length[filter_length]['r2_score_test'].append(r2_score_test)
+    #
+    # # Plotting results
+    # plot_mse_heatmaps(results_by_filter_length, keys=("mse_train", "mse_test"), titles=("MSE Train", "MSE Test"))
+    # plot_mse_heatmaps(results_by_filter_length, keys=("r2_score_train", "r2_score_test"), titles=("R^2 Score Train",
+    #                                                                                               "R^2 Score Test"))
+    #
+    # print(f"Best alpha: {best_alpha}, Best filter length: {best_filter_length}, Lowest MSE test: {lowest_mse}")
 
-    X, y = create_X_Y(abs3, thorax2, filter_length)
+    # Train the best model
+    best_filter_length = 444
+    total_X, total_y = create_X_Y(abs3, thorax2, best_filter_length)
+    # split_index = int(len(total_X) * 0.1)
 
-    print(X.shape, y.shape)
+    # Split the data
+    # X_train, y_train = total_X[split_index:], total_y[split_index:]
+    # X_test, y_test = total_X[:split_index], total_y[:split_index]
 
-    linear_regression = Ridge(alpha=1.0)
-    linear_regression.fit(X, y)
+    best_model = Ridge(alpha=0)
+    best_model.fit(total_X, total_y)
 
-    prediction = linear_regression.predict(X)
-    filtered_output_regression = y - prediction
+    test_prediction = best_model.predict(total_X)
+    residuals = total_y - test_prediction
 
-    squared_prediction = filtered_output_regression ** 2
+    squared_residuals = residuals ** 2
 
-    smoothed_squared_prediction = butter_low_high_pass_filter(squared_prediction.flatten(), cutoff=low_cutoff, fs=fs,
-                                                              order=2, high_low="low")
+    data_to_plot = [test_prediction, residuals, squared_residuals]
 
-    titles = ["abs3- LR prediction", "Squared prediction", "smoothed_squared_prediction", "LR prediction",
-              "norm thorax2", "norm abs3"]
-    plot_data([filtered_output_regression, squared_prediction, smoothed_squared_prediction, prediction, thorax2, abs3],
-              titles, "Final results")
+    plot_data(data_to_plot, ["Model Prediction", "Signal Residuals (Baby's ECG)",
+                             "Squared Residuals"], "")
+
+    plot_fft(squared_residuals, fs, "Squared Residuals in Frequency Domain")
+
+    smoothed_residuals = butter_low_high_pass_filter(data=squared_residuals.flatten(), cutoff=30, fs=fs, order=2,
+                                                     high_low="low")
+
+    plot_fft(smoothed_residuals, fs, "Smoothed Squared Residuals in Frequency Domain")
+
+    # normalized_y_test = normalize(y_test, y_test.mean(), y_test.std())
+    normalized_y = normalize(abdomen3, abdomen3.mean(), abdomen3.std())
+
+    plt.show()
+
+    normalized_smoothed_residuals = normalize(smoothed_residuals, smoothed_residuals.mean(), smoothed_residuals.std())
+
+    plot_data([smoothed_residuals, normalized_smoothed_residuals], ["Smoothed Squared Residuals (30Hz) ",
+                                                                    "Normalized signal"], "Final Results")
+
+    plot_final_ecg(
+        normalized_y,
+        normalized_smoothed_residuals,
+        "Abdomen Channel and Baby's ECG Normalized to Zero Mean and Unit Variance"
+    )
 
 
 if __name__ == "__main__":
