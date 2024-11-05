@@ -278,6 +278,8 @@ def main():
     # plot_data(norm_datasets, titles, "Individually normalized dataset")
     # print(np.argmax(abs3_norm), np.argmax(thorax2_norm))
 
+    # From here, the grid search begins
+
     # alphas = [0, 0.01, 0.1, 1, 10, 100]
     # # filter_lengths = [10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000]
     #
