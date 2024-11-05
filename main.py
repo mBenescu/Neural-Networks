@@ -16,6 +16,16 @@ RAND_SEED = 42
 
 
 def create_X_Y(abs_data: np.ndarray, thorax_data: np.ndarray, filter_window: int) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Constructs the input matrix X and target vector Y for the linear regression model using a sliding window approach.
+
+    :param abs_data: The abdominal ECG data (abdomen3 channel) as a numpy array.
+    :param thorax_data: The thoracic ECG data (thorax2 channel) as a numpy array.
+    :param filter_window: The length of the filter window (number of data points to consider).
+    :return: A tuple (X, Y) where:
+             - X: Input matrix for the regression model, where each row is a window of thorax_data points plus a bias term.
+             - Y: Target vector, consisting of the corresponding points from abs_data.
+    """
     print(f"{filter_window=}")
     index = filter_window // 2
     X = np.ones((len(abs_data) - filter_window, filter_window + 1))
@@ -143,6 +153,15 @@ def butter_low_high_pass_filter(data, cutoff, fs, order, high_low="low"):
 
 
 def get_heatmap_matrix(results_by_filter_length: Dict, key: str):
+    """
+    Constructs a matrix suitable for plotting a heatmap from the results dictionary.
+
+    :param results_by_filter_length: A dictionary where each key is a filter length, and the value is a dictionary
+                                     containing performance metrics and corresponding alpha values.
+    :param key: The metric to extract from the results dictionary (e.g., 'mse_train', 'mse_test').
+    :return: A 2D numpy array containing the specified metric, where rows correspond to filter lengths and
+             columns to alpha values.
+    """
     # Prepare data for heatmap
     alphas = sorted(set(alpha for data in results_by_filter_length.values() for alpha in data['alphas']))
     filter_lengths = sorted(results_by_filter_length.keys())
@@ -158,6 +177,15 @@ def get_heatmap_matrix(results_by_filter_length: Dict, key: str):
 
 
 def plot_heatmap(results_by_filter_length: Dict, key: str, title: str) -> None:
+    """
+    Plots a heatmap for a specified metric over different filter lengths and alpha values.
+
+    :param results_by_filter_length: A dictionary containing results organized by filter lengths. Each filter length
+                                     maps to a dictionary with metrics and alpha values.
+    :param key: The metric to plot in the heatmap (e.g., 'mse_train', 'mse_test').
+    :param title: The title of the heatmap plot.
+    """
+
     matrix_to_plot = get_heatmap_matrix(results_by_filter_length, key)
     alphas = sorted(set(alpha for data in results_by_filter_length.values() for alpha in data['alphas']))
     filter_lengths = sorted(results_by_filter_length.keys())
@@ -170,7 +198,15 @@ def plot_heatmap(results_by_filter_length: Dict, key: str, title: str) -> None:
     plt.show()
 
 
-def plot_mse_heatmaps(results_by_filter_length: Dict, keys: Tuple[str, str], titles: Tuple[str, str]) -> None:
+def plot_comparison_heatmaps(results_by_filter_length: Dict, keys: Tuple[str, str], titles: Tuple[str, str]) -> None:
+    """
+    Plots two heatmaps side by side for training and test metrics over different filter lengths and alpha values.
+
+    :param results_by_filter_length: A dictionary containing results organized by filter lengths. Each filter length
+                                     maps to a dictionary with metrics and alpha values.
+    :param keys: A tuple containing the keys for the metrics to plot (e.g., ('mse_train', 'mse_test')).
+    :param titles: A tuple containing titles for the two heatmaps (e.g., ("MSE Train", "MSE Test")).
+    """
     alphas = sorted(set(alpha for data in results_by_filter_length.values() for alpha in data['alphas']))
     filter_lengths = sorted(results_by_filter_length.keys())
 
@@ -223,11 +259,11 @@ def main():
                    for dataset in datasets]
 
     # Plot the frequency domain of the signals
-    # plot_fft(abdomen3, 1000, "Abs3 raw")
-    # plot_fft(high_passed[2], 1000, "Abs3 high-passed")
+    plot_fft(abdomen3, 1000, "Abdomen3 channel raw")
+    plot_fft(high_passed[2], 1000, "Abdomen3 channel high-passed")
     # plot_fft(low_passed[2], 1000, "Abs3 low-passed")
-    # plot_fft(thorax2, 1000, "Thorax2 raw")
-    # plot_fft(high_passed[-1], 1000, "Thorax2 high-passed")
+    plot_fft(thorax2, 1000, "Thorax2 channel raw")
+    plot_fft(high_passed[-1], 1000, "Thorax2 channel high-passed")
     # plot_fft(low_passed[-1], 1000, "Thorax2 low-passed")
 
     # Prepare signals for filtering
@@ -236,8 +272,8 @@ def main():
 
     # # # Plot the data
     titles = ["abdomen1", "abdomen2", "abdomen3", "thorax1", "thorax2"]
-    # plot_data(datasets, titles, "Raw Data")
-    # plot_data(high_passed, titles, "High-passed with a cutoff frequency of " + str(high_cutoff) + " Hz")
+    plot_data(datasets, titles, "Raw Data")
+    plot_data(high_passed, titles, "High-passed with a cutoff frequency of " + str(high_cutoff) + " Hz")
     # plot_data(low_passed, titles, "Low-passed with a cutoff frequency of " + str(low_cutoff) + " Hz")
     # plot_data(norm_datasets, titles, "Individually normalized dataset")
     # print(np.argmax(abs3_norm), np.argmax(thorax2_norm))
